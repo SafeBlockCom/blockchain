@@ -1,0 +1,6 @@
+[
+  {
+    "type": "sqlite",
+    "path": "d:\\laragon\\www\\blockchain\\blockchain\\blockchain.db"
+  }
+]

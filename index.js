@@ -1,54 +1,83 @@
 const express = require("express");
 const bodyParser = require("body-parser");
-const { Blockchain, Block } = require("./blockchain");
+const { Blockchain } = require("./blockchain");
+const { sequelize } = require("./database");
 
 const app = express();
 app.use(bodyParser.json());
 
 const ecommerceBlockchain = new Blockchain();
 
-app.get("/blockchain", async (req, res) => {
-  try {
-    const blocks = await ecommerceBlockchain.getAllBlocks();
-    res.json(blocks);
-  } catch (error) {
-    res.status(500).send("An error occurred while retrieving the blockchain.");
-  }
+// Route to add a new transaction (for both registration and order management)
+app.post("/addTransaction", async (req, res) => {
+  const { type, sender, recipient, amount, data } = req.body;
+  let transaction = await ecommerceBlockchain.createTransaction({
+    type,
+    sender,
+    recipient,
+    amount,
+    data,
+  });
+  res.send({
+    message: "Transaction added successfully.",
+    data: transaction,
+  });
 });
-app.post("/addPaymentBlock", async (req, res) => {
-  const { paymentValidation } = req.body;
 
-  if (paymentValidation.isValid) {
-    const paymentData = paymentValidation.data;
+// Route to mine pending transactions
+app.post("/minePendingTransactions", async (req, res) => {
+  console.log("api endpoint minePendingTransactions");
+  console.log(req.body);
+  const { minerAddress } = req.body;
+  let _res = await ecommerceBlockchain.minePendingTransactions(minerAddress);
 
-    // Step 3: Create a new block with the payment data
-    const newBlock = new Block(
-      ecommerceBlockchain.chain.length,
-      Date.now().toString(),
-      paymentData
+  const blocks = await sequelize.models.Block.findAll({
+    include: sequelize.models.Transaction,
+    order: [["index", "ASC"]],
+  });
+  res.send({ message: "Block mined successfully.", data: [blocks, _res] });
+});
+
+// Route to mine a specific transaction
+app.post("/mineTransaction", async (req, res) => {
+  const { minerAddress, transactionId } = req.body;
+
+  try {
+    const minedBlock = await ecommerceBlockchain.mineSpecificTransaction(
+      minerAddress,
+      transactionId
     );
 
-    await ecommerceBlockchain.addBlock(newBlock);
-    res.send(newBlock);
-  } else {
-    res.status(400).send({ error: "Invalid payment or payment not confirmed" });
+    res.send({
+      message: "Transaction mined successfully.",
+      block: minedBlock,
+    });
+  } catch (error) {
+    res.status(400).send({ message: error.message });
   }
 });
 
-app.post("/addBlock", async (req, res) => {
-  const { data } = req.body;
-  const newBlock = new Block(
-    ecommerceBlockchain.chain.length,
-    Date.now().toString(),
-    data
-  );
-  await ecommerceBlockchain.addBlock(newBlock);
-  res.send(newBlock);
+// Route to get the blockchain
+app.get("/blockchain", async (req, res) => {
+  const blocks = await sequelize.models.Block.findAll({
+    include: sequelize.models.Transaction,
+    order: [["index", "ASC"]],
+  });
+  res.json(blocks);
 });
 
+// Route to validate the blockchain
 app.get("/validate", async (req, res) => {
-  const isValid = await ecommerceBlockchain.isChainValid();
+  const isValid = ecommerceBlockchain.isChainValid();
   res.send({ isValid });
+});
+
+// Route to get the balance for a specific address
+app.get("/balance/:address", async (req, res) => {
+  const balance = await ecommerceBlockchain.getBalanceOfAddress(
+    req.params.address
+  );
+  res.send({ balance });
 });
 
 const PORT = process.env.PORT || 3000;
