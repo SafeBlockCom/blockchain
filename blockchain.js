@@ -151,14 +151,30 @@ class Blockchain {
     console.log("--minePendingTransactions--");
     console.log("minerAddress: ", minerAddress);
 
-    // Find transactions where there is no blockId listed for the given miner in TransactionMinedBlockIds
-    const pendingTransactionsFromDb = await TransactionModel.findAll({
+    // // Find transactions where there is no blockId listed for the given miner in TransactionMinedBlockIds
+    // const pendingTransactionsFromDb = await TransactionModel.findAll({
+    //   where: {
+    //     blockId: null,
+    //   },
+    //   include: [
+    //     {
+    //       model: TransactionMinedBlockIdsModel,
+    //       required: false,
+    //       where: {
+    //         minerAddress: minerAddress,
+    //       },
+    //     },
+    //   ],
+    // });
+
+    const allTransactionsFromDb = await TransactionModel.findAll({
       where: {
         blockId: null,
       },
       include: [
         {
           model: TransactionMinedBlockIdsModel,
+          as: "MinedBlockIds",
           required: false,
           where: {
             minerAddress: minerAddress,
@@ -166,6 +182,20 @@ class Blockchain {
         },
       ],
     });
+
+    // Get the total number of pending transactions
+    const totalTransactions = allTransactionsFromDb.length;
+
+    // Generate a random number between 1 and 20, but not more than the total number of transactions available
+    const randomCount = Math.min(
+      Math.floor(Math.random() * 20) + 1,
+      totalTransactions
+    );
+
+    // Randomly select the transactions
+    const pendingTransactionsFromDb = allTransactionsFromDb
+      .sort(() => 0.5 - Math.random()) // Shuffle the array to randomize selection
+      .slice(0, randomCount); // Take the first `randomCount` transactions from the shuffled list
 
     const validTransactions = [];
 

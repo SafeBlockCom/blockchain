@@ -71,17 +71,41 @@ app.get("/blockchain", cors(), async (req, res) => {
       const isLast = index === blocks.length - 1;
 
       // Flatten and collect all transactions from the MinedBlockIds
-      const transactions = block.MinedBlockIds.flatMap((minedBlockId) =>
-        minedBlockId.Transaction
-          ? {
-              sender: { publicKey: minedBlockId.Transaction.sender || "0" },
-              receiver: minedBlockId.Transaction.recipient,
-              receiverAddress:
-                minedBlockId.Transaction.recipientAddress || "N/A",
-              amount: minedBlockId.Transaction.amount,
+      // Flatten and collect all transactions from the MinedBlockIds
+      const transactions = block.MinedBlockIds.flatMap((minedBlockId) => {
+        if (minedBlockId.Transaction) {
+          let orderId = "reward"; // Default to "reward"
+          if (minedBlockId.Transaction.type === "order") {
+            try {
+              const transactionData = JSON.parse(minedBlockId.Transaction.data);
+              orderId = transactionData?.orderId ?? "reward";
+            } catch (e) {
+              console.error("Failed to parse Transaction.data:", e.message);
+              orderId = "invalid_data";
             }
-          : []
-      );
+          }
+
+          return {
+            sender: {
+              publicKey:
+                (minedBlockId.Transaction.sender === "network"
+                  ? 0
+                  : minedBlockId.Transaction.sender) || "0",
+            },
+            orderId: orderId,
+            type:
+              minedBlockId.Transaction.type === "order" ? "order" : "reward",
+            receiver: minedBlockId.Transaction.recipient,
+            receiverAddress:
+              (minedBlockId.Transaction.type === "order"
+                ? "Order: TXN " + orderId
+                : minedBlockId.Transaction.recipient?.split("-", 2)[0]) ||
+              "N/A",
+            amount: minedBlockId.Transaction.amount,
+          };
+        }
+        return []; // Return an empty array if there's no Transaction
+      });
 
       // Determine if the block has the maximum number of transactions (isLongest)
       const maxTransactions = Math.max(
