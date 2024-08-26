@@ -2,6 +2,8 @@ const crypto = require("crypto");
 const {
   Block: BlockModel,
   Transaction: TransactionModel,
+  TransactionMinedBlockIds: TransactionMinedBlockIdsModel,
+  Miner: MinerModel,
 } = require("./database");
 
 class Block {
@@ -82,7 +84,6 @@ class Blockchain {
   constructor() {
     this.chain = [this.createGenesisBlock()];
     this.difficulty = 4;
-    this.pendingTransactions = [];
     this.miningReward = 3.125;
   }
 
@@ -104,141 +105,147 @@ class Blockchain {
 
   async createTransaction(transaction) {
     const transactionId = crypto.randomUUID(); // Generate a unique ID for the transaction
+    transaction.identifier = `TX-${Date.now()}-${transactionId}`; // Create a unique identifier
+    console.log(transaction);
+    // Save the transaction to the database using Sequelize
+    const savedTransaction = await TransactionModel.create({
+      identifier: `TX-${Date.now()}-${transactionId}`,
+      type: transaction.type,
+      sender: transaction.sender,
+      recipient: transaction.recipient,
+      amount: transaction.amount,
+      data: transaction.data,
+      blockId: null, // This will be updated once the transaction is mined
+    });
 
-    let _transaction = transaction;
-    // _transaction.id = transactionId; // Assign the ID to the transaction object
-    _transaction.identifier = `TX-${Date.now()}-${transactionId}`; // Create a unique identifier
-    this.pendingTransactions.push(_transaction);
-    return { transaction, transactionId }; // Return the transaction and transaction ID
+    return { transaction: savedTransaction, transactionId };
   }
 
-  async mineSpecificTransaction(minerAddress, transactionId) {
-    console.log("transactionId: ", transactionId);
-    // Filter to find the specific transaction by ID
-    const transactionToMine = this.pendingTransactions.find(
-      (tx) => tx.identifier === transactionId
-    );
+  async registerOrUpdateMiner(
+    minerAddress,
+    nonce,
+    successfulMinedTransactions,
+    reward
+  ) {
+    const [miner, created] = await MinerModel.findOrCreate({
+      where: { minerAddress },
+      defaults: {
+        nonce,
+        successfulMinedTransactions,
+        reward,
+      },
+    });
 
-    if (!transactionToMine) {
-      throw new Error("Transaction not found in pending transactions.");
+    if (!created) {
+      // Update the existing miner's record if they already exist
+      miner.nonce += nonce;
+      miner.successfulMinedTransactions += successfulMinedTransactions;
+      miner.reward += reward;
+      await miner.save();
     }
 
-    // Remove the specific transaction from pending transactions
-    this.pendingTransactions = this.pendingTransactions.filter(
-      (tx) => tx.id !== transactionId
-    );
-
-    // Add mining reward transaction
-    const rewardTx = {
-      id: crypto.randomUUID(),
-      type: "reward",
-      sender: null,
-      recipient: minerAddress,
-      amount: this.miningReward,
-      data: { description: "Block Reward" },
-    };
-
-    const block = new Block(
-      this.chain.length,
-      Date.now().toString(),
-      minerAddress,
-      [transactionToMine, rewardTx], // Mine the specific transaction with the reward transaction
-      this.getLatestBlock().hash,
-      this.miningReward,
-      this.difficulty
-    );
-
-    block.mineBlock();
-
-    await block.save();
-    this.chain.push(block);
-    return block;
+    return miner;
   }
 
   async minePendingTransactions(minerAddress) {
     console.log("--minePendingTransactions--");
-    const validTransactions = [];
-    console.log("pending transactions: ", this.pendingTransactions);
+    console.log("minerAddress: ", minerAddress);
 
-    // Validate each transaction by checking the order/status API
-    for (const transaction of this.pendingTransactions) {
-      try {
-        const isValid = await this.validateTransactionAcrossMiners(transaction);
-        console.log("isValid: ", isValid);
-        if (isValid) {
-          validTransactions.push(transaction);
-        }
-      } catch (error) {
-        console.error(
-          `Error validating transaction ${transaction.identifier}:`,
-          error
-        );
-      }
-    }
+    // Find transactions where there is no blockId listed for the given miner in TransactionMinedBlockIds
+    const pendingTransactionsFromDb = await TransactionModel.findAll({
+      where: {
+        blockId: null,
+      },
+      include: [
+        {
+          model: TransactionMinedBlockIdsModel,
+          required: false,
+          where: {
+            minerAddress: minerAddress,
+          },
+        },
+      ],
+    });
+
+    const validTransactions = pendingTransactionsFromDb.filter(
+      (transaction) => !transaction.TransactionMinedBlockIdsModel
+    );
+
+    console.log("Valid transactions from database:", validTransactions.length);
 
     if (validTransactions.length === 0) {
-      console.log("No valid transactions to mine.");
+      console.log("No transactions to mine.");
       return;
-    } else {
-      const transactionCount = validTransactions.length;
-
-      let block = new Block({
-        timestamp: Date.now().toString(),
-        transactions: validTransactions,
-        previousHash: this.getLatestBlock().hash,
-        successfulMinedTransactions: transactionCount, // Set the count here
-      });
-
-      block.mineBlock(this.difficulty);
-      console.log("Block successfully mined!");
-
-      // Save the block to the database using the Sequelize model
-      const savedBlock = await BlockModel.create({
-        index: block.index,
-        timestamp: block.timestamp,
-        miner: minerAddress,
-        previousHash: block.previousHash,
-        hash: block.hash,
-        nonce: block.nonce,
-        reward: this.miningReward,
-        successfulMinedTransactions: transactionCount, // Save successful transactions count
-      });
-
-      // Associate valid transactions with the block
-      for (const transaction of validTransactions) {
-        await TransactionModel.create({
-          identifier: transaction.identifier,
-          type: transaction.type,
-          sender: transaction.sender,
-          recipient: transaction.recipient,
-          amount: transaction.amount,
-          data: transaction.data,
-          blockId: savedBlock.id,
-        });
-      }
-
-      this.chain.push(block);
-
-      // Reset pending transactions and add the mining reward transaction
-      this.pendingTransactions = [
-        {
-          type: "reward",
-          sender: null,
-          recipient: minerAddress,
-          amount: this.miningReward,
-          data: { description: "Block Reward" },
-        },
-      ];
     }
+
+    // Mine a new block if there are valid transactions
+    const transactionCount = validTransactions.length;
+
+    let block = new Block(
+      this.chain.length, // index
+      Date.now().toString(), // timestamp
+      minerAddress, // miner
+      validTransactions, // transactions
+      this.getLatestBlock().hash, // previousHash
+      this.miningReward, // reward
+      this.difficulty // difficulty
+    );
+
+    block.mineBlock(this.difficulty);
+    console.log("Block successfully mined!");
+
+    // Save the block to the database using the Sequelize model
+    const savedBlock = await BlockModel.create({
+      index: block.index,
+      timestamp: block.timestamp,
+      miner: block.miner,
+      previousHash: block.previousHash,
+      hash: block.hash,
+      nonce: block.nonce,
+      reward: block.reward,
+      successfulMinedTransactions: transactionCount, // Save successful transactions count
+    });
+
+    // Associate valid transactions with the block and update the database
+    for (const transaction of validTransactions) {
+      // transaction.blockId = savedBlock.id;
+      // await transaction.save();
+
+      // Record the mining details
+      await TransactionMinedBlockIdsModel.create({
+        transactionId: transaction.id,
+        blockId: savedBlock.id,
+        minerAddress: minerAddress,
+      });
+    }
+
+    this.chain.push(block);
+
+    // Register or update the miner's information after all transactions are mined
+    await this.registerOrUpdateMiner(
+      minerAddress,
+      block.nonce,
+      transactionCount,
+      block.reward
+    );
+
+    console.log("Mining process completed and block saved to the database.");
   }
 
   async validateTransactionAcrossMiners(transaction) {
     console.log("--validateTransactionAcrossMiners--");
-    console.log(transaction);
-    // Make a call to your order/status API or other validation mechanism here
+
+    console.log(
+      `transaction with ref: ${transaction.identifier} has data: ${
+        transaction.data
+      } with type  ${typeof transaction.data}`
+    );
+    // const parsedData = JSON.parse(transaction.data);
+    // const orderId = parsedData?.orderId;
+    /*
     try {
       const response = await fetch(
-        `http://safeblockcom.test/v1/order/status/${transaction.data?.orderId}`,
+        `http://safeblockcom.test/v1/order/status/${orderId}`,
         {
           method: "GET",
           headers: {
@@ -246,35 +253,15 @@ class Blockchain {
           },
         }
       );
+
       const data = await response.json();
       console.log("data: ", data);
-      return data.status === 200; // Assuming the API returns a status field
+      return data;
     } catch (error) {
       console.error("Error validating transaction:", error);
       return false;
     }
-  }
-
-  async getBalanceOfAddress(address) {
-    let balance = 0;
-    const blocks = await BlockModel.findAll({
-      include: TransactionModel,
-      order: [["index", "ASC"]],
-    });
-
-    for (const block of blocks) {
-      for (const trans of block.Transactions) {
-        if (trans.sender === address) {
-          balance -= trans.amount;
-        }
-
-        if (trans.recipient === address) {
-          balance += trans.amount;
-        }
-      }
-    }
-
-    return balance;
+    */
   }
 
   isChainValid() {

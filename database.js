@@ -1,13 +1,29 @@
 const { Sequelize, DataTypes } = require("sequelize");
+require("dotenv").config();
 
 // Initialize Sequelize
-const sequelize = new Sequelize({
-  dialect: "sqlite",
-  storage: "blockchain.db",
-});
+const sequelize = new Sequelize(
+  "u650424307_bchain_safe",
+  "u650424307_bchain_safe",
+  "&Dp]tHL9Wy",
+  {
+    host: "srv1478.hstgr.io", // Replace with your database server address if not localhost
+    dialect: "mysql", // or 'mariadb'
+    logging: console.log,
+    define: {
+      charset: "utf8",
+      collate: "utf8_general_ci",
+    },
+  }
+);
 
 // Define the Block model
 const Block = sequelize.define("Block", {
+  id: {
+    type: DataTypes.UUID,
+    defaultValue: DataTypes.UUIDV4,
+    primaryKey: true,
+  },
   index: {
     type: DataTypes.INTEGER,
     allowNull: false,
@@ -37,31 +53,35 @@ const Block = sequelize.define("Block", {
     allowNull: false,
   },
   successfulMinedTransactions: {
-    // New field to track successful transactions
     type: DataTypes.INTEGER,
     allowNull: false,
-    defaultValue: 0, // Default to 0 if not provided
+    defaultValue: 0,
   },
 });
 
-// Define the Transaction model with a flexible data field
+// Define the Transaction model
 const Transaction = sequelize.define("Transaction", {
+  id: {
+    type: DataTypes.UUID,
+    defaultValue: DataTypes.UUIDV4,
+    primaryKey: true,
+  },
   identifier: {
     type: DataTypes.STRING,
-    allowNull: false, // Ensure every transaction has an identifier
-    unique: true, // Enforce uniqueness constraint
+    allowNull: false,
+    unique: true,
   },
   type: {
     type: DataTypes.STRING,
-    allowNull: false, // e.g., "registration" or "order"
+    allowNull: false,
   },
   sender: {
     type: DataTypes.STRING,
-    allowNull: true, // Could be null for registration or reward transactions
+    allowNull: true,
   },
   recipient: {
     type: DataTypes.STRING,
-    allowNull: false, // Recipient of the transaction
+    allowNull: false,
   },
   amount: {
     type: DataTypes.FLOAT,
@@ -69,10 +89,10 @@ const Transaction = sequelize.define("Transaction", {
   },
   data: {
     type: DataTypes.JSON,
-    allowNull: false, // To store dynamic data such as registration details or order details
+    allowNull: false,
   },
   blockId: {
-    type: DataTypes.INTEGER,
+    type: DataTypes.UUID,
     references: {
       model: Block,
       key: "id",
@@ -80,13 +100,98 @@ const Transaction = sequelize.define("Transaction", {
   },
 });
 
+// Define the TransactionMinedBlockIds model
+const TransactionMinedBlockIds = sequelize.define("TransactionMinedBlockIds", {
+  id: {
+    type: DataTypes.UUID,
+    defaultValue: DataTypes.UUIDV4,
+    primaryKey: true,
+  },
+  transactionId: {
+    type: DataTypes.UUID,
+    allowNull: false,
+    references: {
+      model: Transaction,
+      key: "id",
+    },
+  },
+  blockId: {
+    type: DataTypes.UUID,
+    allowNull: false,
+    references: {
+      model: Block,
+      key: "id",
+    },
+  },
+  minerAddress: {
+    type: DataTypes.STRING,
+    allowNull: false,
+  },
+  createdAt: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW,
+  },
+  updatedAt: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW,
+  },
+});
+
+// Define the Miner model
+const Miner = sequelize.define("Miner", {
+  id: {
+    type: DataTypes.UUID,
+    defaultValue: DataTypes.UUIDV4,
+    primaryKey: true,
+  },
+  minerAddress: {
+    type: DataTypes.STRING,
+    allowNull: false,
+    unique: true,
+  },
+  nonce: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+  },
+  successfulMinedTransactions: {
+    type: DataTypes.INTEGER,
+    defaultValue: 0,
+  },
+  reward: {
+    type: DataTypes.DECIMAL(10, 2),
+    defaultValue: 0.0,
+  },
+  createdAt: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW,
+  },
+  updatedAt: {
+    type: DataTypes.DATE,
+    defaultValue: DataTypes.NOW,
+  },
+});
+
 // Define relationships
 Block.hasMany(Transaction, { foreignKey: "blockId" });
 Transaction.belongsTo(Block, { foreignKey: "blockId" });
 
-// Force sync the database
-sequelize.sync({ force: true }).then(() => {
-  console.log("Database & tables created!");
+Transaction.hasMany(TransactionMinedBlockIds, { foreignKey: "transactionId" });
+TransactionMinedBlockIds.belongsTo(Transaction, {
+  foreignKey: "transactionId",
 });
 
-module.exports = { Block, Transaction, sequelize };
+Block.hasMany(TransactionMinedBlockIds, { foreignKey: "blockId" });
+TransactionMinedBlockIds.belongsTo(Block, { foreignKey: "blockId" });
+
+// Force sync the database
+// sequelize.sync({ force: true }).then(() => {
+//   console.log("Database & tables created!");
+// });
+
+module.exports = {
+  Block,
+  Transaction,
+  Miner,
+  TransactionMinedBlockIds,
+  sequelize,
+};
