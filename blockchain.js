@@ -167,16 +167,59 @@ class Blockchain {
       ],
     });
 
-    const validTransactions = pendingTransactionsFromDb.filter(
-      (transaction) => !transaction.TransactionMinedBlockIdsModel
-    );
+    const validTransactions = [];
+
+    // Validate each transaction
+    for (const transaction of pendingTransactionsFromDb) {
+      try {
+        console.log("pendingTransactionsFromDb: ", transaction);
+        const response = await this.validateTransactionAcrossMiners(
+          transaction
+        );
+        // Check if the status is 200 and updated_payment_status is "succeeded"
+        if (
+          response.status === 200 &&
+          response.body.status_updated.updated_payment_status === "succeeded"
+        ) {
+          console.log("Status is 200 and payment status is succeeded.");
+          validTransactions.push(transaction);
+        } else {
+          console.log(
+            `Transaction ${transaction.identifier} is invalid and will not be mined.`
+          );
+        }
+      } catch (error) {
+        console.error(
+          `Error validating transaction ${transaction.identifier}:`,
+          error
+        );
+      }
+    }
+
+    // const validTransactions = pendingTransactionsFromDb.filter(
+    //   (transaction) => !transaction.TransactionMinedBlockIdsModel
+    // );
 
     console.log("Valid transactions from database:", validTransactions.length);
 
     if (validTransactions.length === 0) {
-      console.log("No transactions to mine.");
+      console.log("No valid transactions to mine.");
       return;
     }
+
+    // Create the reward transaction for the miner
+    const rewardTransaction = await TransactionModel.create({
+      identifier: `REWARD-${Date.now()}`,
+      type: "reward",
+      sender: "network", // Or some identifier for the network itself
+      recipient: minerAddress,
+      amount: this.miningReward,
+      data: {}, // Additional data can be added if needed
+      blockId: null, // This will be updated once the block is saved
+    });
+
+    // Add the reward transaction to the valid transactions
+    validTransactions.push(rewardTransaction);
 
     // Mine a new block if there are valid transactions
     const transactionCount = validTransactions.length;
@@ -233,16 +276,9 @@ class Blockchain {
   }
 
   async validateTransactionAcrossMiners(transaction) {
-    console.log("--validateTransactionAcrossMiners--");
+    const parsedData = JSON.parse(transaction.data);
+    const orderId = parsedData?.orderId;
 
-    console.log(
-      `transaction with ref: ${transaction.identifier} has data: ${
-        transaction.data
-      } with type  ${typeof transaction.data}`
-    );
-    // const parsedData = JSON.parse(transaction.data);
-    // const orderId = parsedData?.orderId;
-    /*
     try {
       const response = await fetch(
         `http://safeblockcom.test/v1/order/status/${orderId}`,
@@ -261,7 +297,6 @@ class Blockchain {
       console.error("Error validating transaction:", error);
       return false;
     }
-    */
   }
 
   isChainValid() {

@@ -175,14 +175,26 @@ const Miner = sequelize.define("Miner", {
 Block.hasMany(Transaction, { foreignKey: "blockId" });
 Transaction.belongsTo(Block, { foreignKey: "blockId" });
 
-Transaction.hasMany(TransactionMinedBlockIds, { foreignKey: "transactionId" });
+Transaction.hasMany(TransactionMinedBlockIds, {
+  as: "MinedBlockIds",
+  foreignKey: "transactionId",
+});
 TransactionMinedBlockIds.belongsTo(Transaction, {
+  as: "Transaction",
   foreignKey: "transactionId",
 });
 
-Block.hasMany(TransactionMinedBlockIds, { foreignKey: "blockId" });
-TransactionMinedBlockIds.belongsTo(Block, { foreignKey: "blockId" });
+Block.hasMany(TransactionMinedBlockIds, {
+  as: "MinedBlockIds",
+  foreignKey: "blockId",
+});
+TransactionMinedBlockIds.belongsTo(Block, {
+  as: "Block",
+  foreignKey: "blockId",
+});
 
+Block.belongsTo(Miner, { foreignKey: "minerId" });
+Miner.hasMany(Block, { foreignKey: "minerId" });
 // Force sync the database
 // sequelize.sync({ force: true }).then(() => {
 //   console.log("Database & tables created!");
